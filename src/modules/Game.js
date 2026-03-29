@@ -5,6 +5,8 @@ import Stage from './Stage';
 import sound from './Sound';
 import levelCreator from '../libs/levelCreator.js';
 import utils from '../libs/utils';
+import MainMenu from './MainMenu';
+import {GAME_MODE, GAME_MODE_LABELS} from './GameModes';
 
 const BLUE_SKY_COLOR = 0x64b0ff;
 const PINK_SKY_COLOR = 0xfbb4d4;
@@ -35,6 +37,9 @@ class Game {
     this.waveEnding = false;
     this.quackingSoundId = null;
     this.levels = levels.normal;
+    this.gameMode = null;
+    this.menuActive = true;
+    this.mainMenu = null;
     return this;
   }
 
@@ -258,10 +263,23 @@ class Game {
     this.addPauseLink();
     this.addMuteLink();
     this.addFullscreenLink();
+    this.addModeStatus();
     this.bindEvents();
-    this.startLevel();
+    this.openMainMenu();
     this.animate();
 
+  }
+
+  addModeStatus() {
+    this.stage.hud.createTextBox('modeStatus', {
+      style: BOTTOM_LINK_STYLE,
+      location: Stage.modeStatusBoxLocation(),
+      anchor: {
+        x: 0,
+        y: 1
+      }
+    });
+    this.stage.hud.modeStatus = 'mode: not selected';
   }
 
   addFullscreenLink() {
@@ -314,6 +332,7 @@ class Game {
   bindEvents() {
     window.addEventListener('resize', this.scaleToWindow.bind(this));
 
+    this.renderer.canvas.addEventListener('pointermove', this.handlePointerMove.bind(this));
     this.renderer.canvas.addEventListener('pointerdown', this.handleClick.bind(this));
 
     document.addEventListener('keypress', (event) => {
@@ -397,6 +416,95 @@ class Game {
     this.stage.scaleToWindow();
   }
 
+  openMainMenu() {
+    this.stopAllAudio();
+    this.cleanStageState();
+    this.resetMatchStats();
+    this.menuActive = true;
+    this.gameStatus = '';
+    this.clearEndOfGameActions();
+
+    if (!this.mainMenu) {
+      this.mainMenu = new MainMenu();
+    }
+
+    if (!this.mainMenu.parent) {
+      this.stage.addChild(this.mainMenu);
+    }
+
+    this.stage.hideCrosshair();
+    this.stage.hud.modeStatus = 'mode: not selected';
+  }
+
+  startGameInMode(mode) {
+    this.gameMode = mode;
+    this.menuActive = false;
+    this.levelIndex = 0;
+    this.maxScore = 0;
+    this.score = 0;
+    this.timePaused = 0;
+    this.clearEndOfGameActions();
+
+    if (this.mainMenu && this.mainMenu.parent) {
+      this.stage.removeChild(this.mainMenu);
+    }
+
+    this.stage.showCrosshair();
+    this.stage.hud.modeStatus = 'mode: ' + GAME_MODE_LABELS[mode];
+    this.startLevel();
+  }
+
+  restartCurrentMode() {
+    const selectedMode = this.gameMode || GAME_MODE.NORMAL;
+    this.stopAllAudio();
+    this.cleanStageState();
+    this.resetMatchStats();
+    this.menuActive = false;
+    this.startGameInMode(selectedMode);
+  }
+
+  stopAllAudio() {
+    if (this.quackingSoundId) {
+      sound.stop(this.quackingSoundId);
+      this.quackingSoundId = null;
+    }
+
+    const soundsToStop = this.activeSounds.slice(0);
+    for (let i = 0; i < soundsToStop.length; i++) {
+      sound.stop(soundsToStop[i]);
+    }
+  }
+
+  cleanStageState() {
+    this.renderer.background.color = BLUE_SKY_COLOR;
+    this.stage.cleanUpDucks();
+    this.stage.dog.stopAndClearTimeline();
+    this.stage.dog.visible = false;
+    this.stage.unlock();
+  }
+
+  resetMatchStats() {
+    this.levelIndex = 0;
+    this.maxScore = 0;
+    this.score = 0;
+    this.wave = 0;
+    this.bullets = 0;
+    this.ducksShot = 0;
+    this.ducksMissed = 0;
+    this.waveEnding = false;
+    this.timePaused = 0;
+  }
+
+  clearEndOfGameActions() {
+    if (Object.prototype.hasOwnProperty.call(this.stage.hud, 'replayButton')) {
+      this.stage.hud.replayButton = '';
+    }
+
+    if (Object.prototype.hasOwnProperty.call(this.stage.hud, 'menuButton')) {
+      this.stage.hud.menuButton = '';
+    }
+  }
+
   startLevel() {
     if (levelCreator.urlContainsLevelData()) {
       this.level = levelCreator.parseLevelQueryString();
@@ -406,6 +514,7 @@ class Game {
     }
 
     this.maxScore += this.level.waves * this.level.ducks * this.level.pointsPerDuck;
+    this.stage.setCrosshairRadius(this.level.radius);
     this.ducksShot = 0;
     this.ducksMissed = 0;
     this.wave = 0;
@@ -537,10 +646,20 @@ class Game {
   }
 
   showReplay(replayText) {
-    this.stage.hud.createTextBox('replayButton', {
-      location: Stage.replayButtonLocation()
-    });
+    if (!Object.prototype.hasOwnProperty.call(this.stage.hud,'replayButton')) {
+      this.stage.hud.createTextBox('replayButton', {
+        location: Stage.replayButtonLocation()
+      });
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(this.stage.hud,'menuButton')) {
+      this.stage.hud.createTextBox('menuButton', {
+        location: Stage.menuButtonLocation()
+      });
+    }
+
     this.stage.hud.replayButton = replayText + ' Play Again?';
+    this.stage.hud.menuButton = 'Back to menu';
   }
 
   openLevelCreator() {
@@ -551,11 +670,35 @@ class Game {
     window.open('/creator.html', '_blank');
   }
 
+  handlePointerMove(event) {
+    const pointerPoint = {
+      x: event.clientX,
+      y: event.clientY
+    };
+
+    if (this.menuActive) {
+      if (this.mainMenu) {
+        this.mainMenu.setHoverState(this.stage.getScaledClickLocation(pointerPoint));
+      }
+      return;
+    }
+
+    this.stage.setCrosshairTarget(pointerPoint);
+  }
+
   handleClick(event) {
     const clickPoint = {
       x: event.clientX,
       y: event.clientY
     };
+
+    if (this.menuActive) {
+      const selectedMode = this.mainMenu.getSelectedMode(this.stage.getScaledClickLocation(clickPoint));
+      if (selectedMode) {
+        this.startGameInMode(selectedMode);
+      }
+      return;
+    }
 
     if (this.stage.clickedPauseLink(clickPoint)) {
       this.pause();
@@ -580,12 +723,17 @@ class Game {
     if (!this.stage.hud.replayButton && !this.outOfAmmo() && !this.shouldWaveEnd() && !this.paused) {
       sound.play('gunSound');
       this.bullets -= 1;
-      this.updateScore(this.stage.shotsFired(clickPoint, this.level.radius));
+      this.updateScore(this.stage.shotsFiredAtPoint(this.stage.getCrosshairPosition(), this.level.radius));
       return;
     }
 
     if (this.stage.hud.replayButton && this.stage.clickedReplay(clickPoint)) {
-      window.location = window.location.pathname;
+      this.restartCurrentMode();
+      return;
+    }
+
+    if (this.stage.hud.menuButton && this.stage.clickedMenu(clickPoint)) {
+      this.openMainMenu();
     }
   }
 
@@ -597,6 +745,7 @@ class Game {
 
   animate() {
     if (!this.paused) {
+      this.stage.updateCrosshair();
       this.renderer.render(this.stage);
 
       if (this.shouldWaveEnd()) {

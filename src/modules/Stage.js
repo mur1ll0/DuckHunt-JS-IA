@@ -7,6 +7,7 @@ import Utils from '../libs/utils';
 import Duck from './Duck';
 import Dog from './Dog';
 import Hud from './Hud';
+import Crosshair from './Crosshair';
 
 const MAX_X = 800;
 const MAX_Y = 600;
@@ -29,9 +30,11 @@ const HUD_LOCATIONS = {
   MUTE_LINK: new Point(MAX_X - 236, MAX_Y - 10),
   GAME_STATUS: new Point(MAX_X / 2, MAX_Y * 0.45),
   REPLAY_BUTTON: new Point(MAX_X / 2, MAX_Y * 0.56),
+  MENU_BUTTON: new Point(MAX_X / 2, MAX_Y * 0.64),
   BULLET_STATUS: new Point(10, 10),
   DEAD_DUCK_STATUS: new Point(10, MAX_Y * 0.91),
-  MISSED_DUCK_STATUS: new Point(10, MAX_Y * 0.95)
+  MISSED_DUCK_STATUS: new Point(10, MAX_Y * 0.95),
+  MODE_STATUS: new Point(10, MAX_Y - 10)
 };
 
 const FLASH_MS = 60;
@@ -62,6 +65,10 @@ class Stage extends Container {
     this.flashScreen = FLASH_SCREEN;
     this.flashScreen.visible = false;
     this.hud = new Hud();
+    this.crosshair = new Crosshair({
+      startPoint: new Point(MAX_X / 2, MAX_Y / 2)
+    });
+    this.crosshair.visible = false;
 
     this._setStage();
     this.scaleToWindow();
@@ -97,6 +104,14 @@ class Stage extends Container {
 
   static replayButtonLocation() {
     return HUD_LOCATIONS.REPLAY_BUTTON;
+  }
+
+  static menuButtonLocation() {
+    return HUD_LOCATIONS.MENU_BUTTON;
+  }
+
+  static modeStatusBoxLocation() {
+    return HUD_LOCATIONS.MODE_STATUS;
   }
 
   static bulletStatusBoxLocation() {
@@ -152,6 +167,7 @@ class Stage extends Container {
     this.addChild(background);
     this.addChild(this.dog);
     this.addChild(this.flashScreen);
+    this.addChild(this.crosshair);
     this.addChild(this.hud);
 
     return this;
@@ -219,6 +235,17 @@ class Stage extends Container {
    * @returns {Number} - The number of ducks hit with the shot
    */
   shotsFired(clickPoint, radius) {
+    return this.shotsFiredAtPoint(this.getScaledClickLocation(clickPoint), radius);
+  }
+
+  /**
+   * shotsFiredAtPoint
+   * Checks if ducks were hit using a point already converted to stage coordinates.
+   * @param {{x:Number, y:Number}} worldPoint - Point in stage coordinate space
+   * @param {Number} radius - The "blast radius" of the player's weapon
+   * @returns {Number} - The number of ducks hit with the shot
+   */
+  shotsFiredAtPoint(worldPoint, radius) {
     // flash the screen
     this.flashScreen.visible = true;
     _delay(() => {
@@ -228,7 +255,7 @@ class Stage extends Container {
     let ducksShot = 0;
     for (let i = 0; i < this.ducks.length; i++) {
       const duck = this.ducks[i];
-      if (duck.alive && Utils.pointDistance(duck.position, this.getScaledClickLocation(clickPoint)) < radius) {
+      if (duck.alive && Utils.pointDistance(duck.position, worldPoint) < radius) {
         ducksShot++;
         duck.shot();
         duck.timeline.call(() => {
@@ -242,8 +269,15 @@ class Stage extends Container {
   }
 
   clickedReplay(clickPoint) {
-    // this link is in the middle of the page, general radius search is sufficient here
-    return Utils.pointDistance(this.getScaledClickLocation(clickPoint), HUD_LOCATIONS.REPLAY_BUTTON) < 200;
+    const scaledClickPoint = this.getScaledClickLocation(clickPoint);
+    return _inRange(scaledClickPoint.x, HUD_LOCATIONS.REPLAY_BUTTON.x - 240, HUD_LOCATIONS.REPLAY_BUTTON.x + 240) &&
+      _inRange(scaledClickPoint.y, HUD_LOCATIONS.REPLAY_BUTTON.y - 24, HUD_LOCATIONS.REPLAY_BUTTON.y + 24);
+  }
+
+  clickedMenu(clickPoint) {
+    const scaledClickPoint = this.getScaledClickLocation(clickPoint);
+    return _inRange(scaledClickPoint.x, HUD_LOCATIONS.MENU_BUTTON.x - 180, HUD_LOCATIONS.MENU_BUTTON.x + 180) &&
+      _inRange(scaledClickPoint.y, HUD_LOCATIONS.MENU_BUTTON.y - 24, HUD_LOCATIONS.MENU_BUTTON.y + 24);
   }
 
   clickedLevelCreatorLink(clickPoint) {
@@ -277,6 +311,30 @@ class Stage extends Container {
       x: clickPoint.x / this.scale.x,
       y: clickPoint.y / this.scale.y
     };
+  }
+
+  setCrosshairTarget(screenPoint) {
+    this.crosshair.setTargetPosition(this.getScaledClickLocation(screenPoint));
+  }
+
+  setCrosshairRadius(radius) {
+    this.crosshair.setRadius(radius);
+  }
+
+  getCrosshairPosition() {
+    return this.crosshair.getCenter();
+  }
+
+  updateCrosshair() {
+    this.crosshair.update();
+  }
+
+  showCrosshair() {
+    this.crosshair.visible = true;
+  }
+
+  hideCrosshair() {
+    this.crosshair.visible = false;
   }
   /**
    * flyAway

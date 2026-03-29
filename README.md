@@ -23,6 +23,21 @@ The flow of this game is managed using Javascript. The main chunks of business l
  - `cd` into that directory and run `npm install`
  - Use `npm start` to start a local webserver which will make the site available at http://localhost:8080/. Cross origin errors prevent this project from being accessed in the browser with the `file://` protocol. This will also trigger automatic builds and reloads of the page when changes are detected in the `src` directory.
  - If you want to manually cut a build of the application code run `npm run build`
+
+## Game Modes (Task 0)
+
+When the game loads, it now opens a main menu before any wave starts.
+
+- `Normal`: keeps the current baseline gameplay flow.
+- `Mira automatica`: mode placeholder for assisted aiming features from upcoming tasks.
+- `Modo guiado por IA`: mode placeholder for full AI-guided aiming and duck behavior.
+
+How to validate:
+
+- Start with `npm start` and open the game.
+- Confirm no level starts before selecting a mode.
+- Select each mode and verify the selected mode appears in the HUD footer (`mode: ...`).
+- Finish the run and verify both end options are visible: `Play Again?` (same mode) and `Back to menu`.
  
 ## Working With Audio and Visual Assets
 This repo ships with committed dist files to make it easy for developers to get up and running. If you really want to get into some leet haxing and change the way

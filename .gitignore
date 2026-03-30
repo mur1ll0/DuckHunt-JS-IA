@@ -1,3 +1,12 @@
 node_modules
 .terraform
-/dist
+/dist/*
+!/dist/audio.json
+!/dist/audio.mp3
+!/dist/audio.ogg
+!/dist/creator.html
+!/dist/duckhunt.js
+!/dist/duckhunt.js.map
+!/dist/index.html
+!/dist/sprites.json
+!/dist/sprites.png

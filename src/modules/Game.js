@@ -7,6 +7,7 @@ import levelCreator from '../libs/levelCreator.js';
 import utils from '../libs/utils';
 import MainMenu from './MainMenu';
 import {GAME_MODE, GAME_MODE_LABELS} from './GameModes';
+import AIMiraController from './AIMiraController';
 
 const BLUE_SKY_COLOR = 0x64b0ff;
 const PINK_SKY_COLOR = 0xfbb4d4;
@@ -40,6 +41,16 @@ class Game {
     this.gameMode = null;
     this.menuActive = true;
     this.mainMenu = null;
+
+    // AI Aim Controller for IA_GUIDED and AUTO_AIM modes
+    this.aiController = new AIMiraController({
+      autoInit: false,
+      onAimAction: this.handleAIAiming.bind(this),
+      onFireIntent: this.handleAIFire.bind(this)
+    });
+    this.lastShotHits = 0;
+    this.lastShotWasPerfectDouble = false;
+
     return this;
   }
 
@@ -423,6 +434,7 @@ class Game {
     this.menuActive = true;
     this.gameStatus = '';
     this.clearEndOfGameActions();
+    this.aiController.disable();
 
     if (!this.mainMenu) {
       this.mainMenu = new MainMenu();
@@ -447,6 +459,14 @@ class Game {
 
     if (this.mainMenu && this.mainMenu.parent) {
       this.stage.removeChild(this.mainMenu);
+    }
+
+    // Initialize AI controller ONLY for AUTO_AIM mode
+    // IA_GUIDED is reserved for future training (Task 3)
+    if (mode === GAME_MODE.AUTO_AIM) {
+      this.aiController.enable(mode);
+    } else {
+      this.aiController.disable();
     }
 
     this.stage.showCrosshair();
@@ -683,6 +703,12 @@ class Game {
       return;
     }
 
+    // Skip mouse control ONLY in AUTO_AIM mode (AI shooting)
+    // IA_GUIDED mode should accept mouse input (for future use)
+    if (this.gameMode === GAME_MODE.AUTO_AIM) {
+      return;
+    }
+
     this.stage.setCrosshairTarget(pointerPoint);
   }
 
@@ -720,6 +746,20 @@ class Game {
       return;
     }
 
+    // Skip firing ONLY in AUTO_AIM mode (handled by AI controller)
+    // IA_GUIDED mode should accept mouse clicks (for future use)
+    if (this.gameMode === GAME_MODE.AUTO_AIM) {
+      if (this.stage.hud.replayButton && this.stage.clickedReplay(clickPoint)) {
+        this.restartCurrentMode();
+        return;
+      }
+      if (this.stage.hud.menuButton && this.stage.clickedMenu(clickPoint)) {
+        this.openMainMenu();
+        return;
+      }
+      return;
+    }
+
     if (!this.stage.hud.replayButton && !this.outOfAmmo() && !this.shouldWaveEnd() && !this.paused) {
       sound.play('gunSound');
       this.bullets -= 1;
@@ -743,9 +783,96 @@ class Game {
     this.score += ducksShot * this.level.pointsPerDuck;
   }
 
+  /**
+   * Handle AI aiming action from worker
+   * Applies worker's calculated crosshair position to screen
+   */
+  handleAIAiming(aimData) {
+    if (!aimData || !aimData.target) {
+      return;
+    }
+
+    const worldBounds = this.stage.getScaledClickLocation({
+      x: this.renderer.canvas.width,
+      y: this.renderer.canvas.height
+    });
+    const targetX = Number.isFinite(aimData.target.x)
+      ? Math.max(0, Math.min(worldBounds.x, aimData.target.x))
+      : this.stage.getCrosshairPosition().x;
+    const targetY = Number.isFinite(aimData.target.y)
+      ? Math.max(0, Math.min(worldBounds.y, aimData.target.y))
+      : this.stage.getCrosshairPosition().y;
+
+    // Worker operates in stage coordinates. Convert back to screen coordinates
+    // because Stage.setCrosshairTarget expects screen-space input.
+    this.stage.setCrosshairTarget({
+      x: targetX * this.stage.scale.x,
+      y: targetY * this.stage.scale.y
+    });
+  }
+
+  /**
+   * Handle AI fire intent from worker
+   * Execute automatic firing if conditions are met
+   */
+  handleAIFire() {
+    // Only fire if conditions are met
+    if (!this.stage.hud.replayButton && !this.outOfAmmo() && !this.shouldWaveEnd() && !this.paused) {
+      sound.play('gunSound');
+      this.bullets -= 1;
+
+      const crosshairPos = this.stage.getCrosshairPosition();
+      const hits = this.stage.shotsFiredAtPoint(crosshairPos, this.level.radius);
+      
+      this.lastShotHits = hits;
+      this.lastShotWasPerfectDouble = (hits === 2);
+      
+      this.updateScore(hits);
+
+      // Send feedback to worker for learning
+      const aliveCount = this.stage.ducks.filter(d => d.alive).length;
+      this.aiController.sendShotResult(hits, aliveCount, this.wave, this.lastShotWasPerfectDouble);
+    }
+  }
+
   animate() {
     if (!this.paused) {
       this.stage.updateCrosshair();
+
+      // Send frame state to AI worker for aiming (AUTO_AIM mode only)
+      if (this.aiController && this.aiController.enabled && this.stage.ducks) {
+        // Map duck state with full information for proper filtering
+        const duckStates = this.stage.ducks.map(duck => ({
+          id: duck.uuid || Math.random(),
+          x: duck.position.x,
+          y: duck.position.y,
+          alive: duck.alive,
+          state: duck.state || 'unknown',
+          inDogsMouth: false  // Will be set during game logic when dog retrieves
+        }));
+
+        const crosshairPos = this.stage.getCrosshairPosition();
+        const worldBounds = this.stage.getScaledClickLocation({
+          x: this.renderer.canvas.width,
+          y: this.renderer.canvas.height
+        });
+
+        this.aiController.sendFrameState({
+          timestamp: Date.now(),
+          ducks: duckStates,
+          crosshair: {
+            x: crosshairPos.x,
+            y: crosshairPos.y,
+            radius: this.stage.crosshair.radius
+          },
+          screenWidth: worldBounds.x,
+          screenHeight: worldBounds.y,
+          duckSpeed: this.level ? this.level.speed : 5, // Pass duck speed for adaptive smoothing
+          ammo: this.bullets,
+          paused: this.paused
+        });
+      }
+
       this.renderer.render(this.stage);
 
       if (this.shouldWaveEnd()) {

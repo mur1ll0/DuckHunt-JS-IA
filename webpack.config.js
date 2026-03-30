@@ -1,6 +1,7 @@
 'use strict';
 
 var path = require('path');
+var CopyPlugin = require('copy-webpack-plugin');
 
 module.exports = function(env, argv) {
   var isProduction = argv.mode === 'production';
@@ -26,7 +27,7 @@ module.exports = function(env, argv) {
       rules: [
         {
           test: /\.js$/,
-          exclude: /node_modules/,
+          exclude: /node_modules|src\/workers/,
           loader: 'babel-loader',
           options: {
             presets: ['@babel/preset-env'],
@@ -39,6 +40,16 @@ module.exports = function(env, argv) {
         },
       ]
     },
+    plugins: [
+      new CopyPlugin({
+        patterns: [
+          {
+            from: 'src/workers',
+            to: 'workers',
+          },
+        ],
+      }),
+    ],
     resolve: {
       modules: ['node_modules'],
       extensions: ['.js', '.min.js'],

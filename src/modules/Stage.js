@@ -217,6 +217,8 @@ class Stage extends Container {
         maxY: MAX_Y
       });
       newDuck.position.set(DUCK_POINTS.ORIGIN.x, DUCK_POINTS.ORIGIN.y);
+      // Assign unique ID for AI tracking
+      newDuck.uuid = this.ducks.length + '_' + Date.now() + '_' + Math.random();
       this.addChildAt(newDuck, 0);
       newDuck.randomFlight({
         speed

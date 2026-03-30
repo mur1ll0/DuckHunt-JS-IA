@@ -7,5 +7,5 @@ export const GAME_MODE = Object.freeze({
 export const GAME_MODE_LABELS = Object.freeze({
   [GAME_MODE.NORMAL]: 'Normal',
   [GAME_MODE.AUTO_AIM]: 'Mira automatica',
-  [GAME_MODE.IA_GUIDED]: 'Modo guiado por IA'
+  [GAME_MODE.IA_GUIDED]: 'Patos com IA genetica'
 });

@@ -4,7 +4,7 @@ import {some as _some} from 'lodash/collection';
 import {delay as _delay} from 'lodash/function';
 import {inRange as _inRange} from 'lodash/number';
 import Utils from '../libs/utils';
-import Duck from './Duck';
+import Duck, {MOVEMENT_MODE} from './Duck';
 import Dog from './Dog';
 import Hud from './Hud';
 import Crosshair from './Crosshair';
@@ -14,6 +14,12 @@ const MAX_Y = 600;
 
 const DUCK_POINTS = {
   ORIGIN: new Point(MAX_X / 2, MAX_Y)
+};
+const DUCK_AI_BOUNDS = {
+  minX: 30,
+  maxX: MAX_X - 30,
+  minY: 35,
+  maxY: Math.floor(MAX_Y * 0.72)
 };
 const DOG_POINTS = {
   DOWN: new Point(MAX_X / 2, MAX_Y),
@@ -25,6 +31,7 @@ const HUD_LOCATIONS = {
   SCORE: new Point(MAX_X - 10, 10),
   WAVE_STATUS: new Point(MAX_X - 11, MAX_Y - 30),
   LEVEL_CREATOR_LINK: new Point(MAX_X - 11, MAX_Y - 10),
+  MENU_LINK: new Point(MAX_X - 420, MAX_Y - 10),
   FULL_SCREEN_LINK: new Point(MAX_X - 130, MAX_Y - 10),
   PAUSE_LINK: new Point(MAX_X - 318, MAX_Y - 10),
   MUTE_LINK: new Point(MAX_X - 236, MAX_Y - 10),
@@ -100,6 +107,10 @@ class Stage extends Container {
 
   static levelCreatorLinkBoxLocation() {
     return HUD_LOCATIONS.LEVEL_CREATOR_LINK;
+  }
+
+  static menuLinkBoxLocation() {
+    return HUD_LOCATIONS.MENU_LINK;
   }
 
   static replayButtonLocation() {
@@ -205,7 +216,9 @@ class Stage extends Container {
    * @param {Number} numDucks - How many ducks to add to the stage
    * @param {Number} speed - Value from 0 (slow) to 10 (fast) that determines how fast the ducks will fly
    */
-  addDucks(numDucks, speed) {
+  addDucks(numDucks, speed, opts = {}) {
+    const movementMode = opts.movementMode || MOVEMENT_MODE.RANDOM;
+
     for (let i = 0; i < numDucks; i++) {
       const duckColor = i % 2 === 0 ? 'red' : 'black';
 
@@ -219,12 +232,63 @@ class Stage extends Container {
       newDuck.position.set(DUCK_POINTS.ORIGIN.x, DUCK_POINTS.ORIGIN.y);
       // Assign unique ID for AI tracking
       newDuck.uuid = this.ducks.length + '_' + Date.now() + '_' + Math.random();
+      newDuck.spawnTimestamp = Date.now();
       this.addChildAt(newDuck, 0);
-      newDuck.randomFlight({
-        speed
-      });
+
+      if (movementMode === MOVEMENT_MODE.EVADE_AI) {
+        newDuck.setMovementMode(MOVEMENT_MODE.EVADE_AI);
+        newDuck.position.set(
+          DUCK_AI_BOUNDS.minX + (Math.random() * (DUCK_AI_BOUNDS.maxX - DUCK_AI_BOUNDS.minX)),
+          DUCK_AI_BOUNDS.maxY - (Math.random() * 20)
+        );
+        newDuck.setAIMovementTarget({
+          targetX: DUCK_AI_BOUNDS.minX + (Math.random() * (DUCK_AI_BOUNDS.maxX - DUCK_AI_BOUNDS.minX)),
+          targetY: DUCK_AI_BOUNDS.minY + (Math.random() * (DUCK_AI_BOUNDS.maxY - DUCK_AI_BOUNDS.minY)),
+          speed: 1
+        });
+      } else {
+        newDuck.setMovementMode(MOVEMENT_MODE.RANDOM);
+        newDuck.randomFlight({
+          speed
+        });
+      }
 
       this.ducks.push(newDuck);
+    }
+  }
+
+  getDuckAIBounds() {
+    return {
+      minX: DUCK_AI_BOUNDS.minX,
+      maxX: DUCK_AI_BOUNDS.maxX,
+      minY: DUCK_AI_BOUNDS.minY,
+      maxY: DUCK_AI_BOUNDS.maxY
+    };
+  }
+
+  applyDuckAIActions(actions, deltaSeconds, speed) {
+    const safeActions = Array.isArray(actions) ? actions : [];
+
+    const actionByDuckId = new Map();
+    for (let i = 0; i < safeActions.length; i++) {
+      if (safeActions[i] && safeActions[i].id) {
+        actionByDuckId.set(safeActions[i].id, safeActions[i]);
+      }
+    }
+
+    const bounds = this.getDuckAIBounds();
+    for (let i = 0; i < this.ducks.length; i++) {
+      const duck = this.ducks[i];
+      if (!duck || !duck.alive || duck.movementMode !== MOVEMENT_MODE.EVADE_AI) {
+        continue;
+      }
+
+      const action = actionByDuckId.get(duck.uuid);
+      if (action) {
+        duck.setAIMovementTarget(action);
+      }
+
+      duck.updateAIMovement(deltaSeconds, bounds, speed);
     }
   }
 
@@ -255,10 +319,12 @@ class Stage extends Container {
     }, FLASH_MS);
 
     let ducksShot = 0;
+    this.lastShotDuckIds = [];
     for (let i = 0; i < this.ducks.length; i++) {
       const duck = this.ducks[i];
       if (duck.alive && Utils.pointDistance(duck.position, worldPoint) < radius) {
         ducksShot++;
+        this.lastShotDuckIds.push(duck.uuid);
         duck.shot();
         duck.timeline.call(() => {
           if (!this.isLocked()) {
@@ -268,6 +334,12 @@ class Stage extends Container {
       }
     }
     return ducksShot;
+  }
+
+  consumeLastShotDuckIds() {
+    const lastShot = this.lastShotDuckIds || [];
+    this.lastShotDuckIds = [];
+    return lastShot;
   }
 
   clickedReplay(clickPoint) {
@@ -288,6 +360,12 @@ class Stage extends Container {
     // with this link we have a very narrow hit box, radius search is not appropriate
     return _inRange(scaledClickPoint.x, HUD_LOCATIONS.LEVEL_CREATOR_LINK.x-110, HUD_LOCATIONS.LEVEL_CREATOR_LINK.x) &&
       _inRange(scaledClickPoint.y, HUD_LOCATIONS.LEVEL_CREATOR_LINK.y-30, HUD_LOCATIONS.LEVEL_CREATOR_LINK.y+10);
+  }
+
+  clickedMenuLink(clickPoint) {
+    const scaledClickPoint = this.getScaledClickLocation(clickPoint);
+    return _inRange(scaledClickPoint.x, HUD_LOCATIONS.MENU_LINK.x - 160, HUD_LOCATIONS.MENU_LINK.x) &&
+      _inRange(scaledClickPoint.y, HUD_LOCATIONS.MENU_LINK.y - 30, HUD_LOCATIONS.MENU_LINK.y + 10);
   }
 
   clickedPauseLink(clickPoint) {

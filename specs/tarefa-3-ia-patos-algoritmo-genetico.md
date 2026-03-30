@@ -7,9 +7,13 @@ Criar uma IA em thread separada para controlar o movimento dos patos, substituin
 ## Requisitos funcionais obrigatorios
 
 - Rodar em Web Worker independente da IA da mira.
+- Somente ativará esse modo na terceira opção do menu.
 - Usar TensorFlow.js apenas se necessario para componentes auxiliares; nucleo de decisao baseado em algoritmo genetico.
 - Patos devem identificar aproximacao da mira e desviar automaticamente.
 - Comportamento deve preservar jogabilidade (nao pode tornar acerto impossivel).
+- Criar um modo debug do algoritmo genético para visualizar as gerações. (Pode ser um modo separado focado em treino e deixar a terceira opção do menu para o jogo treinar normalmente).
+- Sempre salvar e utilizar os dados do modelo do algoritmo genético, de modo que toda vez que executar a aplicação ele já inicie com o treino anterior e continue treinando.
+- Regra obrigatória: O movimento dos patos nunca deve voltar para o chão, sempre deve permanecer acima do sprite do chão onde a mira consegue detectar.
 
 ## Estado atual de movimento (baseline)
 

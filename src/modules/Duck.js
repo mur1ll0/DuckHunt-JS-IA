@@ -8,6 +8,11 @@ import sound from './Sound';
 const DEATH_ANIMATION_SECONDS = 0.6;
 const RANDOM_FLIGHT_DELTA = 300;
 
+const MOVEMENT_MODE = Object.freeze({
+  RANDOM: 'RANDOM',
+  EVADE_AI: 'EVADE_AI'
+});
+
 class Duck extends Character {
   /**
    * Duck constructor
@@ -58,6 +63,94 @@ class Duck extends Character {
     this.visible = true;
     this.options = options;
     this.anchor.set(0.5, 0.5);
+    this.movementMode = MOVEMENT_MODE.RANDOM;
+    this.aiTarget = null;
+    this.aiVelocity = {
+      x: 0,
+      y: 0
+    };
+    this.spawnTimestamp = Date.now();
+  }
+
+  setMovementMode(mode) {
+    this.movementMode = mode || MOVEMENT_MODE.RANDOM;
+
+    if (this.movementMode === MOVEMENT_MODE.EVADE_AI) {
+      this.stopAndClearTimeline();
+      this.play();
+    }
+
+    return this;
+  }
+
+  setAIMovementTarget(action) {
+    if (!action) {
+      return;
+    }
+
+    this.aiTarget = {
+      x: action.targetX,
+      y: action.targetY,
+      speed: action.speed
+    };
+  }
+
+  updateAIMovement(deltaSeconds, bounds, speedLevel) {
+    if (!this.alive || this.movementMode !== MOVEMENT_MODE.EVADE_AI) {
+      return;
+    }
+
+    this.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, this.position.x));
+    this.position.y = Math.max(bounds.minY, Math.min(bounds.maxY, this.position.y));
+
+    if (!this.aiTarget) {
+      return;
+    }
+
+    const dt = Math.max(0.001, deltaSeconds || 0.016);
+    const targetVector = {
+      x: this.aiTarget.x - this.position.x,
+      y: this.aiTarget.y - this.position.y
+    };
+    const distance = Math.hypot(targetVector.x, targetVector.y) || 1;
+
+    const desiredDirection = {
+      x: targetVector.x / distance,
+      y: targetVector.y / distance
+    };
+    const basePxPerSecond = 150 + ((speedLevel || 5) * 28);
+    const aiSpeedMultiplier = this.aiTarget.speed || 1;
+    const maxSpeed = basePxPerSecond * aiSpeedMultiplier;
+
+    const desiredVelocity = {
+      x: desiredDirection.x * maxSpeed,
+      y: desiredDirection.y * maxSpeed
+    };
+
+    const blend = 0.18;
+    this.aiVelocity.x += (desiredVelocity.x - this.aiVelocity.x) * blend;
+    this.aiVelocity.y += (desiredVelocity.y - this.aiVelocity.y) * blend;
+
+    this.position.x += this.aiVelocity.x * dt;
+    this.position.y += this.aiVelocity.y * dt;
+
+    this.position.x = Math.max(bounds.minX, Math.min(bounds.maxX, this.position.x));
+    this.position.y = Math.max(bounds.minY, Math.min(bounds.maxY, this.position.y));
+
+    const heading = {
+      x: this.aiVelocity.x,
+      y: this.aiVelocity.y
+    };
+
+    if (Math.abs(heading.x) < 6 && Math.abs(heading.y) < 6) {
+      return;
+    }
+
+    if (heading.y < -12) {
+      this.state = heading.x < 0 ? 'top-left' : 'top-right';
+    } else {
+      this.state = heading.x < 0 ? 'left' : 'right';
+    }
   }
 
   /**
@@ -243,3 +336,4 @@ class Duck extends Character {
 }
 
 export default Duck;
+export {MOVEMENT_MODE};

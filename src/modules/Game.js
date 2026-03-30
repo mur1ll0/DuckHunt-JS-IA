@@ -6,8 +6,9 @@ import sound from './Sound';
 import levelCreator from '../libs/levelCreator.js';
 import utils from '../libs/utils';
 import MainMenu from './MainMenu';
-import {GAME_MODE, GAME_MODE_LABELS} from './GameModes';
 import AIMiraController from './AIMiraController';
+import AIDuckController from './AIDuckController';
+import {MOVEMENT_MODE} from './Duck';
 
 const BLUE_SKY_COLOR = 0x64b0ff;
 const PINK_SKY_COLOR = 0xfbb4d4;
@@ -38,7 +39,10 @@ class Game {
     this.waveEnding = false;
     this.quackingSoundId = null;
     this.levels = levels.normal;
-    this.gameMode = null;
+    this.activeModes = {
+      autoAim: false,
+      duckAI: false
+    };
     this.menuActive = true;
     this.mainMenu = null;
 
@@ -48,6 +52,21 @@ class Game {
       onAimAction: this.handleAIAiming.bind(this),
       onFireIntent: this.handleAIFire.bind(this)
     });
+
+    this.duckAIController = new AIDuckController({
+      debugEnabled: this.readDuckAIDebugFlag(),
+      onDuckActions: this.handleDuckAIActions.bind(this),
+      onDebugUpdate: this.handleDuckAIDebug.bind(this)
+    });
+    this.duckAIActions = [];
+    this.duckAIDebug = null;
+    this.duckAIDebugEnabled = this.readDuckAIDebugFlag();
+    this.lastAnimationTimestamp = Date.now();
+    this.lastCrosshairState = {
+      x: 0,
+      y: 0,
+      timestamp: Date.now()
+    };
     this.lastShotHits = 0;
     this.lastShotWasPerfectDouble = false;
 
@@ -270,11 +289,13 @@ class Game {
     });
 
     this.scaleToWindow();
+    this.addMenuLink();
     this.addLinkToLevelCreator();
     this.addPauseLink();
     this.addMuteLink();
     this.addFullscreenLink();
     this.addModeStatus();
+    this.addDuckAIDebugPanel();
     this.bindEvents();
     this.openMainMenu();
     this.animate();
@@ -291,6 +312,38 @@ class Game {
       }
     });
     this.stage.hud.modeStatus = 'mode: not selected';
+  }
+
+  addDuckAIDebugPanel() {
+    this.stage.hud.createTextBox('duckAIDebugPanel', {
+      style: {
+        fontFamily: 'Arial',
+        fontSize: '14px',
+        align: 'right',
+        fill: '#e7f6ff'
+      },
+      location: {
+        x: 790,
+        y: 44
+      },
+      anchor: {
+        x: 1,
+        y: 0
+      }
+    });
+    this.stage.hud.duckAIDebugPanel = '';
+  }
+
+  addMenuLink() {
+    this.stage.hud.createTextBox('menuLink', {
+      style: BOTTOM_LINK_STYLE,
+      location: Stage.menuLinkBoxLocation(),
+      anchor: {
+        x: 1,
+        y: 1
+      }
+    });
+    this.stage.hud.menuLink = 'menu (esc)';
   }
 
   addFullscreenLink() {
@@ -364,6 +417,16 @@ class Game {
       if (event.key === 'f') {
         this.fullscreen();
       }
+
+      if (event.key === 'g') {
+        this.toggleDuckAIDebug();
+      }
+    });
+
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape' && !this.menuActive) {
+        this.openMainMenu();
+      }
     });
 
     document.addEventListener('fullscreenchange', () => {
@@ -435,6 +498,15 @@ class Game {
     this.gameStatus = '';
     this.clearEndOfGameActions();
     this.aiController.disable();
+    this.duckAIController.disable();
+    this.duckAIActions = [];
+    this.duckAIDebug = null;
+    this.activeModes = {
+      autoAim: false,
+      duckAI: false
+    };
+    this.stage.hud.modeStatus = 'mode: not selected';
+    this.stage.hud.duckAIDebugPanel = '';
 
     if (!this.mainMenu) {
       this.mainMenu = new MainMenu();
@@ -445,11 +517,13 @@ class Game {
     }
 
     this.stage.hideCrosshair();
-    this.stage.hud.modeStatus = 'mode: not selected';
   }
 
-  startGameInMode(mode) {
-    this.gameMode = mode;
+  startGameInMode(modeSelection = {}) {
+    this.activeModes = {
+      autoAim: !!modeSelection.autoAim,
+      duckAI: !!modeSelection.duckAI
+    };
     this.menuActive = false;
     this.levelIndex = 0;
     this.maxScore = 0;
@@ -461,26 +535,41 @@ class Game {
       this.stage.removeChild(this.mainMenu);
     }
 
-    // Initialize AI controller ONLY for AUTO_AIM mode
-    // IA_GUIDED is reserved for future training (Task 3)
-    if (mode === GAME_MODE.AUTO_AIM) {
-      this.aiController.enable(mode);
+    if (this.isAutoAimEnabled()) {
+      this.aiController.enable('auto_aim_combo');
     } else {
       this.aiController.disable();
     }
 
+    if (this.isDuckAIEnabled()) {
+      this.duckAIController.enable();
+      this.duckAIController.setDebug(this.duckAIDebugEnabled);
+    } else {
+      this.duckAIController.disable();
+    }
+
     this.stage.showCrosshair();
-    this.stage.hud.modeStatus = 'mode: ' + GAME_MODE_LABELS[mode];
+    this.updateModeStatusText();
     this.startLevel();
   }
 
   restartCurrentMode() {
-    const selectedMode = this.gameMode || GAME_MODE.NORMAL;
+    const selectedMode = {
+      ...this.activeModes
+    };
     this.stopAllAudio();
     this.cleanStageState();
     this.resetMatchStats();
     this.menuActive = false;
     this.startGameInMode(selectedMode);
+  }
+
+  isAutoAimEnabled() {
+    return !!(this.activeModes && this.activeModes.autoAim);
+  }
+
+  isDuckAIEnabled() {
+    return !!(this.activeModes && this.activeModes.duckAI);
   }
 
   stopAllAudio() {
@@ -554,13 +643,19 @@ class Game {
     this.ducksShotThisWave = 0;
     this.waveEnding = false;
 
-    this.stage.addDucks(this.level.ducks, this.level.speed);
+    const movementMode = this.isDuckAIEnabled() ? MOVEMENT_MODE.EVADE_AI : MOVEMENT_MODE.RANDOM;
+    this.stage.addDucks(this.level.ducks, this.level.speed, {
+      movementMode
+    });
   }
 
   endWave() {
     this.waveEnding = true;
     this.bullets = 0;
     sound.stop(this.quackingSoundId);
+
+    this.sendDuckAIWaveRewards();
+
     if (this.stage.ducksAlive()) {
       this.ducksMissed += this.level.ducks - this.ducksShotThisWave;
       this.renderer.background.color = PINK_SKY_COLOR;
@@ -624,12 +719,26 @@ class Game {
   win() {
     sound.play('champ');
     this.gameStatus = 'You Win!';
+    if (this.isDuckAIEnabled()) {
+      this.stage.hud.replayButton = '';
+      this.stage.hud.menuButton = '';
+      this.gameStatus = 'You Win! Reiniciando treino...';
+      setTimeout(() => this.restartCurrentMode(), 1200);
+      return;
+    }
     this.showReplay(this.getScoreMessage());
   }
 
   loss() {
     sound.play('loserSound');
     this.gameStatus = 'You Lose!';
+    if (this.isDuckAIEnabled()) {
+      this.stage.hud.replayButton = '';
+      this.stage.hud.menuButton = '';
+      this.gameStatus = 'You Lose! Reiniciando treino...';
+      setTimeout(() => this.restartCurrentMode(), 1200);
+      return;
+    }
     this.showReplay(this.getScoreMessage());
   }
 
@@ -703,9 +812,7 @@ class Game {
       return;
     }
 
-    // Skip mouse control ONLY in AUTO_AIM mode (AI shooting)
-    // IA_GUIDED mode should accept mouse input (for future use)
-    if (this.gameMode === GAME_MODE.AUTO_AIM) {
+    if (this.isAutoAimEnabled()) {
       return;
     }
 
@@ -719,10 +826,15 @@ class Game {
     };
 
     if (this.menuActive) {
-      const selectedMode = this.mainMenu.getSelectedMode(this.stage.getScaledClickLocation(clickPoint));
-      if (selectedMode) {
-        this.startGameInMode(selectedMode);
+      const action = this.mainMenu.getAction(this.stage.getScaledClickLocation(clickPoint));
+      if (action && action.type === 'start') {
+        this.startGameInMode(action.selection);
       }
+      return;
+    }
+
+    if (this.stage.clickedMenuLink(clickPoint)) {
+      this.openMainMenu();
       return;
     }
 
@@ -746,9 +858,7 @@ class Game {
       return;
     }
 
-    // Skip firing ONLY in AUTO_AIM mode (handled by AI controller)
-    // IA_GUIDED mode should accept mouse clicks (for future use)
-    if (this.gameMode === GAME_MODE.AUTO_AIM) {
+    if (this.isAutoAimEnabled()) {
       if (this.stage.hud.replayButton && this.stage.clickedReplay(clickPoint)) {
         this.restartCurrentMode();
         return;
@@ -763,7 +873,9 @@ class Game {
     if (!this.stage.hud.replayButton && !this.outOfAmmo() && !this.shouldWaveEnd() && !this.paused) {
       sound.play('gunSound');
       this.bullets -= 1;
-      this.updateScore(this.stage.shotsFiredAtPoint(this.stage.getCrosshairPosition(), this.level.radius));
+      const hits = this.stage.shotsFiredAtPoint(this.stage.getCrosshairPosition(), this.level.radius);
+      this.updateScore(hits);
+      this.notifyDuckAIShotRewards();
       return;
     }
 
@@ -781,6 +893,130 @@ class Game {
     this.ducksShot += ducksShot;
     this.ducksShotThisWave += ducksShot;
     this.score += ducksShot * this.level.pointsPerDuck;
+  }
+
+  readDuckAIDebugFlag() {
+    const query = new URLSearchParams(window.location.search || '');
+    if (query.get('duckAIDebug') === '1') {
+      return true;
+    }
+
+    return localStorage.getItem('duckhunt.duck_ai.debug') === '1';
+  }
+
+  toggleDuckAIDebug() {
+    this.duckAIDebugEnabled = !this.duckAIDebugEnabled;
+    localStorage.setItem('duckhunt.duck_ai.debug', this.duckAIDebugEnabled ? '1' : '0');
+    this.duckAIController.setDebug(this.duckAIDebugEnabled);
+    this.updateModeStatusText();
+    this.updateDuckAIDebugPanel();
+  }
+
+  updateModeStatusText() {
+    if (!this.activeModes) {
+      this.stage.hud.modeStatus = 'mode: not selected';
+      return;
+    }
+
+    const modeTokens = [];
+    if (this.isAutoAimEnabled()) {
+      modeTokens.push('mira automatica');
+    }
+    if (this.isDuckAIEnabled()) {
+      modeTokens.push('patos ia genetica');
+    }
+
+    this.stage.hud.modeStatus = 'mode: ' + (modeTokens.length ? modeTokens.join(' + ') : 'manual');
+  }
+
+  updateDuckAIDebugPanel() {
+    if (!this.duckAIDebugEnabled || !this.isDuckAIEnabled()) {
+      this.stage.hud.duckAIDebugPanel = '';
+      return;
+    }
+
+    const debug = this.duckAIDebug || {};
+    const generation = Number.isFinite(debug.generation) ? debug.generation : 0;
+    const best = Number.isFinite(debug.bestFitness) ? debug.bestFitness.toFixed(3) : '0.000';
+    const median = Number.isFinite(debug.medianFitness) ? debug.medianFitness.toFixed(3) : '0.000';
+    const samples = Number.isFinite(debug.totalSamples) ? debug.totalSamples : 0;
+    const alive = Number.isFinite(debug.aliveDucks) ? debug.aliveDucks : 0;
+
+    this.stage.hud.duckAIDebugPanel = [
+      'DEBUG IA GENETICA',
+      'Geracao: ' + generation,
+      'Best fitness: ' + best,
+      'Median fitness: ' + median,
+      'Samples: ' + samples,
+      'Patos vivos: ' + alive
+    ].join('\n');
+  }
+
+  handleDuckAIActions(payload) {
+    this.duckAIActions = payload && Array.isArray(payload.actions) ? payload.actions : [];
+  }
+
+  handleDuckAIDebug(payload) {
+    this.duckAIDebug = payload;
+    this.updateModeStatusText();
+    this.updateDuckAIDebugPanel();
+  }
+
+  getDuckById(duckId) {
+    for (let i = 0; i < this.stage.ducks.length; i++) {
+      if (this.stage.ducks[i].uuid === duckId) {
+        return this.stage.ducks[i];
+      }
+    }
+
+    return null;
+  }
+
+  notifyDuckAIShotRewards() {
+    if (!this.duckAIController.enabled) {
+      return;
+    }
+
+    const shotDuckIds = this.stage.consumeLastShotDuckIds();
+    if (!shotDuckIds.length) {
+      return;
+    }
+
+    const now = Date.now();
+    for (let i = 0; i < shotDuckIds.length; i++) {
+      const duckId = shotDuckIds[i];
+      const duck = this.getDuckById(duckId);
+      const survivedMs = duck ? Math.max(0, now - (duck.spawnTimestamp || now)) : 0;
+
+      this.duckAIController.sendDuckReward({
+        duckId,
+        survivedMs,
+        shot: true,
+        reward: -1.6
+      });
+    }
+  }
+
+  sendDuckAIWaveRewards() {
+    if (!this.duckAIController.enabled || !this.stage.ducks) {
+      return;
+    }
+
+    const now = Date.now();
+    for (let i = 0; i < this.stage.ducks.length; i++) {
+      const duck = this.stage.ducks[i];
+      if (!duck || !duck.alive) {
+        continue;
+      }
+
+      const survivedMs = Math.max(0, now - (duck.spawnTimestamp || now));
+      this.duckAIController.sendDuckReward({
+        duckId: duck.uuid,
+        survivedMs,
+        shot: false,
+        reward: 0.75
+      });
+    }
   }
 
   /**
@@ -828,6 +1064,7 @@ class Game {
       this.lastShotWasPerfectDouble = (hits === 2);
       
       this.updateScore(hits);
+      this.notifyDuckAIShotRewards();
 
       // Send feedback to worker for learning
       const aliveCount = this.stage.ducks.filter(d => d.alive).length;
@@ -836,8 +1073,50 @@ class Game {
   }
 
   animate() {
+    const now = Date.now();
+    const deltaSeconds = Math.min(0.05, (now - this.lastAnimationTimestamp) / 1000);
+    this.lastAnimationTimestamp = now;
+
     if (!this.paused) {
       this.stage.updateCrosshair();
+
+      if (this.duckAIController && this.duckAIController.enabled && this.stage.ducks) {
+        this.stage.applyDuckAIActions(this.duckAIActions, deltaSeconds, this.level ? this.level.speed : 5);
+
+        const crosshairPos = this.stage.getCrosshairPosition();
+        const prev = this.lastCrosshairState;
+        const dtMs = Math.max(1, now - prev.timestamp);
+        const crosshairVx = (crosshairPos.x - prev.x) / dtMs;
+        const crosshairVy = (crosshairPos.y - prev.y) / dtMs;
+        this.lastCrosshairState = {
+          x: crosshairPos.x,
+          y: crosshairPos.y,
+          timestamp: now
+        };
+
+        const ducksState = this.stage.ducks.map((duck) => ({
+          id: duck.uuid,
+          x: duck.position.x,
+          y: duck.position.y,
+          vx: duck.aiVelocity ? duck.aiVelocity.x : 0,
+          vy: duck.aiVelocity ? duck.aiVelocity.y : 0,
+          alive: duck.alive
+        }));
+
+        this.duckAIController.sendDuckState({
+          timestamp: now,
+          deltaMs: dtMs,
+          crosshair: {
+            x: crosshairPos.x,
+            y: crosshairPos.y,
+            radius: this.stage.crosshair.radius,
+            vx: crosshairVx,
+            vy: crosshairVy
+          },
+          ducks: ducksState,
+          bounds: this.stage.getDuckAIBounds()
+        });
+      }
 
       // Send frame state to AI worker for aiming (AUTO_AIM mode only)
       if (this.aiController && this.aiController.enabled && this.stage.ducks) {
